@@ -1,0 +1,35 @@
+{
+  "@context": {
+    "sosa": "http://www.w3.org/ns/sosa/",
+    "schema": "http://schema.org/",
+    "unit": "http://qudt.org/vocab/unit/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+
+  "@id": "http://44.213.60.114:5000/device/dht11",
+  "@type": "sosa:Sensor",
+
+  "schema:name": "Sensor HC-SR04",
+  "schema:description": "Sensor físico responsável por medir distancia.",
+
+  "sosa:observes": [
+    {
+      "@id": "http://44.213.60.114:5000/prop/distance",
+      "@type": "sosa:ObservableProperty",
+      "schema:name": "distancia",
+      "unit:unitCode": "CEL"
+    },
+    {
+      "@id": "http://44.213.60.114:5000/prop/alert",
+      "@type": "sosa:ObservableProperty",
+      "schema:name": "alerta",
+      "unit:unitCode": "P1"
+    }
+  ],
+
+  "sosa:isHostedBy": {
+    "@type": "schema:Computer",
+    "schema:name": "Servidor Flask",
+    "schema:url": "http://44.213.60.114:5000"
+  }
+}
