@@ -23,6 +23,13 @@ class Leitura(db.Model):
     distancia_cm = db.Column(db.Float)
     alerta = db.Column(db.Boolean, default=False)
     data_hora = db.Column(db.DateTime, default=datetime.utcnow)
+    ip_origem = db.Column(db.String(45))  # Suporta IPv4 e IPv6
+
+def get_client_ip():
+    """Obtém o IP real do cliente, considerando proxies"""
+    if request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    return request.remote_addr
 
 with app.app_context():
     db.create_all()
@@ -34,6 +41,7 @@ def serve_jsonld():
 @app.route('/api/enviar', methods=['POST'])
 def receber_dados():
     dados = request.json
+    ip_cliente = get_client_ip()
     
     # Parse data_hora string to datetime
     data_hora_str = dados.get('data_hora')
@@ -51,28 +59,33 @@ def receber_dados():
     nova_leitura = Leitura(
         distancia_cm=distancia,
         alerta=dados.get('alerta', False),
-        data_hora=data_hora
+        data_hora=data_hora,
+        ip_origem=ip_cliente
     )
     db.session.add(nova_leitura)
     db.session.commit()
     
-    # Notifica clientes via WebSocket se houver alerta
+    # Notifica clientes via WebSocket (inclui IP para filtro no cliente)
     socketio.emit('nova_leitura', {
         'distancia_cm': nova_leitura.distancia_cm,
         'alerta': nova_leitura.alerta,
-        'data_hora': nova_leitura.data_hora.strftime("%H:%M:%S")
+        'data_hora': nova_leitura.data_hora.strftime("%H:%M:%S"),
+        'ip_origem': ip_cliente
     })
     
-    return jsonify({"status": "sucesso"}), 201
+    return jsonify({"status": "sucesso", "ip_registrado": ip_cliente}), 201
 
 @app.route('/api/leituras-hoje')
 def leituras_hoje():
     # Usa timezone do Brasil para determinar "hoje"
     agora_brasil = datetime.now(BRAZIL_TZ)
     hoje = agora_brasil.date()
+    ip_visualizador = get_client_ip()
     
+    # Filtra apenas leituras do mesmo IP (mesma casa/rede)
     leituras = Leitura.query.filter(
-        func.date(Leitura.data_hora) == hoje
+        func.date(Leitura.data_hora) == hoje,
+        Leitura.ip_origem == ip_visualizador
     ).order_by(Leitura.data_hora.asc()).all()
     
     return jsonify([{
@@ -90,13 +103,16 @@ def alertas_por_hora():
         # Usa timezone do Brasil como padrão
         data_filtro = datetime.now(BRAZIL_TZ).date()
     
-    # Agrupa alertas por hora
+    ip_visualizador = get_client_ip()
+    
+    # Agrupa alertas por hora (filtrando por IP)
     resultado = db.session.query(
         func.extract('hour', Leitura.data_hora).label('hora'),
         func.count(Leitura.id).label('total_alertas')
     ).filter(
         func.date(Leitura.data_hora) == data_filtro,
-        Leitura.alerta == True
+        Leitura.alerta == True,
+        Leitura.ip_origem == ip_visualizador
     ).group_by(
         func.extract('hour', Leitura.data_hora)
     ).order_by('hora').all()
@@ -112,8 +128,13 @@ def alertas_por_hora():
 
 @app.route('/api/datas-disponiveis')
 def datas_disponiveis():
+    ip_visualizador = get_client_ip()
+    
+    # Retorna apenas datas que têm dados do mesmo IP
     datas = db.session.query(
         func.date(Leitura.data_hora).label('data')
+    ).filter(
+        Leitura.ip_origem == ip_visualizador
     ).distinct().order_by(func.date(Leitura.data_hora).desc()).all()
     
     return jsonify([d.data.strftime('%Y-%m-%d') for d in datas])
