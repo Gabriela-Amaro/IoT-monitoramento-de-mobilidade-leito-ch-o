@@ -9,7 +9,7 @@ import random
 from datetime import datetime, timedelta
 
 # URL da API
-AWS_URL = "http://localhost:5000/api/enviar"
+AWS_URL = "http://98.95.203.92:5000/api/enviar"
 
 # Configurações
 DIAS_ANTERIORES = 7  # Quantos dias para trás gerar dados

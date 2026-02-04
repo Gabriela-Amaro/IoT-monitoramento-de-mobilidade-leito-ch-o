@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 
 # URL da API (altere para o IP da AWS em produção)
-AWS_URL = "http://localhost:5000/api/enviar"
+AWS_URL = "http://98.95.203.92:5000/api/enviar"
 
 # Configurações da simulação
 INTERVALO_ENVIO = 3  # segundos entre cada envio
