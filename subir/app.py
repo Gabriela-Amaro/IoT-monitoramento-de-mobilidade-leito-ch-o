@@ -1,9 +1,12 @@
 from flask import Flask, request, jsonify, render_template_string, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_socketio import SocketIO, emit
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from sqlalchemy import func
 import os
+
+# Timezone Brasil (UTC-3)
+BRAZIL_TZ = timezone(timedelta(hours=-3))
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'monitor-ultrassonico-secret'
@@ -64,7 +67,10 @@ def receber_dados():
 
 @app.route('/api/leituras-hoje')
 def leituras_hoje():
-    hoje = date.today()
+    # Usa timezone do Brasil para determinar "hoje"
+    agora_brasil = datetime.now(BRAZIL_TZ)
+    hoje = agora_brasil.date()
+    
     leituras = Leitura.query.filter(
         func.date(Leitura.data_hora) == hoje
     ).order_by(Leitura.data_hora.asc()).all()
@@ -81,7 +87,8 @@ def alertas_por_hora():
     if data_str:
         data_filtro = datetime.strptime(data_str, '%Y-%m-%d').date()
     else:
-        data_filtro = date.today()
+        # Usa timezone do Brasil como padrão
+        data_filtro = datetime.now(BRAZIL_TZ).date()
     
     # Agrupa alertas por hora
     resultado = db.session.query(
@@ -257,6 +264,7 @@ def index():
                     }]
                 },
                 options: {
+                    animation: false, // Sem animação para não parecer reinício
                     responsive: true,
                     scales: {
                         y: {
@@ -275,11 +283,15 @@ def index():
                 }
             });
             
-            // Carrega dados iniciais
+            // Carrega dados iniciais (todos do dia)
             fetch('/api/leituras-hoje')
                 .then(r => r.json())
                 .then(data => {
-                    data.forEach(l => addPonto(l.data_hora, l.distancia_cm, l.alerta));
+                    // Carrega todos os dados históricos de uma vez
+                    chart.data.labels = data.map(l => l.data_hora);
+                    chart.data.datasets[0].data = data.map(l => l.distancia_cm);
+                    chart.update('none');
+                    
                     if (data.length > 0) {
                         const ultimo = data[data.length - 1];
                         atualizarStatus(ultimo.distancia_cm, ultimo.alerta, ultimo.data_hora);
@@ -293,6 +305,7 @@ def index():
             });
             
             function addPonto(hora, distancia, alerta) {
+                // Limita apenas novos pontos para não sobrecarregar o gráfico
                 if (chart.data.labels.length > MAX_PONTOS) {
                     chart.data.labels.shift();
                     chart.data.datasets[0].data.shift();
