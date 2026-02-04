@@ -6,30 +6,32 @@
     "xsd": "http://www.w3.org/2001/XMLSchema#"
   },
 
-  "@id": "http://44.213.60.114:5000/device/dht11",
+  "@id": "http://44.213.60.114:5000/device/hc-sr04",
   "@type": "sosa:Sensor",
 
   "schema:name": "Sensor HC-SR04",
-  "schema:description": "Sensor físico responsável por medir distancia.",
+  "schema:description": "Sensor ultrassônico para monitoramento de presença de idosos. Posicionado embaixo da cama, detecta quando a pessoa levanta através da variação de distância.",
 
   "sosa:observes": [
     {
       "@id": "http://44.213.60.114:5000/prop/distance",
       "@type": "sosa:ObservableProperty",
-      "schema:name": "distancia",
-      "unit:unitCode": "CEL"
+      "schema:name": "distancia_cm",
+      "schema:description": "Distância em centímetros medida pelo sensor",
+      "unit:unitCode": "CM"
     },
     {
       "@id": "http://44.213.60.114:5000/prop/alert",
       "@type": "sosa:ObservableProperty",
       "schema:name": "alerta",
-      "unit:unitCode": "P1"
+      "schema:description": "Indica se foi detectada presença fora da cama (distância entre 30-100cm)",
+      "unit:unitCode": "xsd:boolean"
     }
   ],
 
   "sosa:isHostedBy": {
     "@type": "schema:Computer",
-    "schema:name": "Servidor Flask",
+    "schema:name": "ESP32 + Servidor Flask AWS",
     "schema:url": "http://44.213.60.114:5000"
   }
 }

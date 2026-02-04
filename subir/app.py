@@ -1,20 +1,24 @@
-from flask import Flask, request, jsonify, render_template_string, send_from_directory, url_for
+from flask import Flask, request, jsonify, render_template_string, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
+from flask_socketio import SocketIO, emit
+from datetime import datetime, date
+from sqlalchemy import func
 import os
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'monitor-ultrassonico-secret'
 
 # Configuração do Banco
 app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://user:password@db/monitor_db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Modelo da Tabela (ATUALIZADO COM COLUNA alerta)
+# Modelo da Tabela
 class Leitura(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    distancia = db.Column(db.Float)
-    alerta = db.Column(db.String(20)) # Nova coluna
+    distancia_cm = db.Column(db.Float)
+    alerta = db.Column(db.Boolean, default=False)
     data_hora = db.Column(db.DateTime, default=datetime.utcnow)
 
 with app.app_context():
@@ -22,105 +26,501 @@ with app.app_context():
 
 @app.route('/sensor.jsonld')
 def serve_jsonld():
-    # Envia o arquivo que está na mesma pasta do app.py
     return send_from_directory(os.getcwd(), 'sensor.jsonld', mimetype='application/ld+json')
 
 @app.route('/api/enviar', methods=['POST'])
 def receber_dados():
     dados = request.json
+    
+    # Parse data_hora string to datetime
+    data_hora_str = dados.get('data_hora')
+    if data_hora_str:
+        try:
+            data_hora = datetime.fromisoformat(data_hora_str)
+        except ValueError:
+            data_hora = datetime.now()
+    else:
+        data_hora = datetime.now()
+    
+    # Aceita tanto 'distancia_cm' quanto 'distancia'
+    distancia = dados.get('distancia_cm') or dados.get('distancia')
+    
     nova_leitura = Leitura(
-        distancia=dados.get('distancia'),
-        alerta=dados.get('alerta'),
-        data_hora=dados.get('data_hora')
+        distancia_cm=distancia,
+        alerta=dados.get('alerta', False),
+        data_hora=data_hora
     )
     db.session.add(nova_leitura)
     db.session.commit()
+    
+    # Notifica clientes via WebSocket se houver alerta
+    socketio.emit('nova_leitura', {
+        'distancia_cm': nova_leitura.distancia_cm,
+        'alerta': nova_leitura.alerta,
+        'data_hora': nova_leitura.data_hora.strftime("%H:%M:%S")
+    })
+    
     return jsonify({"status": "sucesso"}), 201
+
+@app.route('/api/leituras-hoje')
+def leituras_hoje():
+    hoje = date.today()
+    leituras = Leitura.query.filter(
+        func.date(Leitura.data_hora) == hoje
+    ).order_by(Leitura.data_hora.asc()).all()
+    
+    return jsonify([{
+        'distancia_cm': l.distancia_cm,
+        'alerta': l.alerta,
+        'data_hora': l.data_hora.strftime("%H:%M:%S")
+    } for l in leituras])
+
+@app.route('/api/alertas-por-hora')
+def alertas_por_hora():
+    data_str = request.args.get('data')
+    if data_str:
+        data_filtro = datetime.strptime(data_str, '%Y-%m-%d').date()
+    else:
+        data_filtro = date.today()
+    
+    # Agrupa alertas por hora
+    resultado = db.session.query(
+        func.extract('hour', Leitura.data_hora).label('hora'),
+        func.count(Leitura.id).label('total_alertas')
+    ).filter(
+        func.date(Leitura.data_hora) == data_filtro,
+        Leitura.alerta == True
+    ).group_by(
+        func.extract('hour', Leitura.data_hora)
+    ).order_by('hora').all()
+    
+    # Formata resposta com todas as 24 horas
+    alertas_por_hora = {int(r.hora): r.total_alertas for r in resultado}
+    dados = [{'hora': h, 'alertas': alertas_por_hora.get(h, 0)} for h in range(24)]
+    
+    return jsonify({
+        'data': data_filtro.strftime('%Y-%m-%d'),
+        'dados': dados
+    })
+
+@app.route('/api/datas-disponiveis')
+def datas_disponiveis():
+    datas = db.session.query(
+        func.date(Leitura.data_hora).label('data')
+    ).distinct().order_by(func.date(Leitura.data_hora).desc()).all()
+    
+    return jsonify([d.data.strftime('%Y-%m-%d') for d in datas])
 
 @app.route('/')
 def index():
     ultima = Leitura.query.order_by(Leitura.id.desc()).first()
     
-    # Valores padrão para não quebrar se o banco estiver vazio
-    dados_view = {
-        "dist": "--", "alert": "--", "hora": "Aguardando...",
-        "bg_color": "#62ee38", "text_color": "#333", 
-    }
-
-    if ultima:
-        dados_view["dist"] = ultima.distancia
-        dados_view["alert"] = ultima.umidade
-        dados_view["hora"] = ultima.data_hora.strftime("%H:%M:%S")
-        
-        # LÓGICA VISUAL BASEADA NO alerta
-        # MUDAR A LOGICA
-        p = ultima.alerta
-        if p == 'noite':
-            dados_view["bg_color"] = "#2c3e50" # Azul Escuro
-            dados_view["text_color"] = "#ecf0f1" # Branco
-            dados_view["icone"] = "🌙" # Lua
-        elif p == 'tarde':
-            dados_view["bg_color"] = "#f39c12" # Laranja Forte
-            dados_view["text_color"] = "#fff"
-            dados_view["icone"] = "☀️" # Sol Forte
-        else: # dia (manhã)
-            dados_view["bg_color"] = "#87CEEB" # Azul Céu
-            dados_view["text_color"] = "#333"
-            dados_view["icone"] = "🌅" # Sol Nascendo
-
     html = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Monitor IoT</title>
-        <meta http-equiv="refresh" content="3">
-
-        <script type="application/ld+json" src="{{ url_for('serve_jsonld') }}"></script>
-
+        <title>Monitor de Presença - IoT</title>
+        <meta charset="UTF-8">
+        <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
             body { 
-                font-family: 'Verdana', sans-serif; 
+                font-family: 'Segoe UI', Tahoma, sans-serif; 
+                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                min-height: 100vh;
+                color: #fff;
+                padding: 20px;
+            }
+            .container { max-width: 1200px; margin: 0 auto; }
+            h1 { 
                 text-align: center; 
-                padding: 50px; 
-                background-color: {{ dados.bg_color }}; 
-                color: {{ dados.text_color }};
-                transition: background-color 0.5s ease;
+                margin-bottom: 30px;
+                font-size: 2em;
             }
-            .card { 
-                background: rgba(255, 255, 255, 0.2); 
+            h1 span { opacity: 0.7; font-weight: normal; }
+            
+            .status-card {
+                background: rgba(255,255,255,0.1);
                 backdrop-filter: blur(10px);
-                padding: 30px; 
-                border-radius: 20px; 
-                display: inline-block; 
-                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-                border: 1px solid rgba(255,255,255,0.3);
+                border-radius: 20px;
+                padding: 30px;
+                margin-bottom: 30px;
+                border: 1px solid rgba(255,255,255,0.2);
+                display: flex;
+                justify-content: space-around;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 20px;
             }
-            .icone-grande { font-size: 80px; margin-bottom: 10px; }
-            .valor { font-size: 50px; font-weight: bold; }
-            .label { font-size: 18px; opacity: 0.8; }
+            
+            .status-item { text-align: center; }
+            .status-value { 
+                font-size: 3em; 
+                font-weight: bold;
+                display: block;
+            }
+            .status-label { opacity: 0.7; margin-top: 5px; }
+            
+            .alert-indicator {
+                padding: 15px 40px;
+                border-radius: 50px;
+                font-size: 1.5em;
+                font-weight: bold;
+                transition: all 0.3s ease;
+            }
+            .alert-normal { 
+                background: linear-gradient(135deg, #00b894, #00cec9);
+                box-shadow: 0 0 30px rgba(0,184,148,0.5);
+            }
+            .alert-danger { 
+                background: linear-gradient(135deg, #e74c3c, #c0392b);
+                box-shadow: 0 0 30px rgba(231,76,60,0.5);
+                animation: pulse 1s infinite;
+            }
+            @keyframes pulse {
+                0%, 100% { transform: scale(1); }
+                50% { transform: scale(1.05); }
+            }
+            
+            .chart-card {
+                background: rgba(255,255,255,0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 30px;
+                margin-bottom: 30px;
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+            .chart-title { margin-bottom: 20px; font-size: 1.2em; }
+            
+            .nav-link {
+                display: inline-block;
+                background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+                color: #fff;
+                text-decoration: none;
+                padding: 15px 30px;
+                border-radius: 50px;
+                font-weight: bold;
+                transition: transform 0.3s ease;
+            }
+            .nav-link:hover { transform: translateY(-3px); }
+            .text-center { text-align: center; }
         </style>
     </head>
     <body>
-        <div class="card">
-            <div class="icone-grande">{{ dados.icone }}</div>
-            <h1>Monitoramento {{ dados.alerta }}</h1>
+        <div class="container">
+            <h1>Monitor de Presença <span>| Sensor Ultrassônico</span></h1>
             
-            <div>
-                <span class="valor">{{ dados.temp }}°C</span>
-                <p class="label">distancia</p>
+            <div class="status-card">
+                <div class="status-item">
+                    <span class="status-value" id="distancia">--</span>
+                    <span class="status-label">Distância (cm)</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-value" id="hora">--:--:--</span>
+                    <span class="status-label">Última Leitura</span>
+                </div>
+                <div id="alert-box" class="alert-indicator alert-normal">
+                    🟢 Normal
+                </div>
             </div>
-            <br>
-            <div>
-                <span class="valor">{{ dados.umid }}%</span>
-                <p class="label">Umidade</p>
+            
+            <div class="chart-card">
+                <h3 class="chart-title">📈 Distância ao Longo do Tempo (Hoje)</h3>
+                <canvas id="distanciaChart"></canvas>
             </div>
-            <hr style="border-color: rgba(255,255,255,0.3)">
-            <small>Atualizado em: {{ dados.hora }}</small>
+            
+            <div class="text-center">
+                <a href="/graficos" class="nav-link">📊 Ver Histórico de Alertas</a>
+            </div>
         </div>
+        
+        <script>
+            const socket = io();
+            let chart;
+            const MAX_PONTOS = 100;
+            
+            // Inicializa gráfico
+            const ctx = document.getElementById('distanciaChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Distância (cm)',
+                        data: [],
+                        borderColor: '#00cec9',
+                        backgroundColor: 'rgba(0,206,201,0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: '#fff' }
+                        },
+                        x: {
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: '#fff', maxTicksLimit: 10 }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#fff' } }
+                    }
+                }
+            });
+            
+            // Carrega dados iniciais
+            fetch('/api/leituras-hoje')
+                .then(r => r.json())
+                .then(data => {
+                    data.forEach(l => addPonto(l.data_hora, l.distancia_cm, l.alerta));
+                    if (data.length > 0) {
+                        const ultimo = data[data.length - 1];
+                        atualizarStatus(ultimo.distancia_cm, ultimo.alerta, ultimo.data_hora);
+                    }
+                });
+            
+            // Recebe atualizações em tempo real
+            socket.on('nova_leitura', function(data) {
+                addPonto(data.data_hora, data.distancia_cm, data.alerta);
+                atualizarStatus(data.distancia_cm, data.alerta, data.data_hora);
+            });
+            
+            function addPonto(hora, distancia, alerta) {
+                if (chart.data.labels.length > MAX_PONTOS) {
+                    chart.data.labels.shift();
+                    chart.data.datasets[0].data.shift();
+                }
+                chart.data.labels.push(hora);
+                chart.data.datasets[0].data.push(distancia);
+                chart.update('none');
+            }
+            
+            function atualizarStatus(distancia, alerta, hora) {
+                document.getElementById('distancia').textContent = distancia.toFixed(1);
+                document.getElementById('hora').textContent = hora;
+                
+                const alertBox = document.getElementById('alert-box');
+                if (alerta) {
+                    alertBox.className = 'alert-indicator alert-danger';
+                    alertBox.innerHTML = '🔴 ALERTA!';
+                } else {
+                    alertBox.className = 'alert-indicator alert-normal';
+                    alertBox.innerHTML = '🟢 Normal';
+                }
+            }
+            
+            // Fallback: polling a cada 5s caso WebSocket falhe
+            setInterval(() => {
+                fetch('/api/leituras-hoje')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.length > 0) {
+                            const ultimo = data[data.length - 1];
+                            atualizarStatus(ultimo.distancia_cm, ultimo.alerta, ultimo.data_hora);
+                        }
+                    });
+            }, 5000);
+        </script>
     </body>
     </html>
     """
-    return render_template_string(html, dados=dados_view)
+    return render_template_string(html)
+
+@app.route('/graficos')
+def graficos():
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Histórico de Alertas - IoT</title>
+        <meta charset="UTF-8">
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { 
+                font-family: 'Segoe UI', Tahoma, sans-serif; 
+                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                min-height: 100vh;
+                color: #fff;
+                padding: 20px;
+            }
+            .container { max-width: 1200px; margin: 0 auto; }
+            h1 { 
+                text-align: center; 
+                margin-bottom: 30px;
+                font-size: 2em;
+            }
+            
+            .controls {
+                background: rgba(255,255,255,0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 20px;
+                margin-bottom: 30px;
+                border: 1px solid rgba(255,255,255,0.2);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                gap: 20px;
+                flex-wrap: wrap;
+            }
+            
+            select, button {
+                padding: 12px 25px;
+                border-radius: 50px;
+                border: none;
+                font-size: 1em;
+                cursor: pointer;
+            }
+            select {
+                background: rgba(255,255,255,0.9);
+                color: #333;
+            }
+            button {
+                background: linear-gradient(135deg, #6c5ce7, #a29bfe);
+                color: #fff;
+                font-weight: bold;
+                transition: transform 0.3s ease;
+            }
+            button:hover { transform: translateY(-2px); }
+            
+            .chart-card {
+                background: rgba(255,255,255,0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 30px;
+                margin-bottom: 30px;
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+            .chart-title { margin-bottom: 20px; font-size: 1.2em; text-align: center; }
+            
+            .nav-link {
+                display: inline-block;
+                background: linear-gradient(135deg, #00b894, #00cec9);
+                color: #fff;
+                text-decoration: none;
+                padding: 15px 30px;
+                border-radius: 50px;
+                font-weight: bold;
+                transition: transform 0.3s ease;
+            }
+            .nav-link:hover { transform: translateY(-3px); }
+            .text-center { text-align: center; }
+            
+            .info-text {
+                text-align: center;
+                opacity: 0.7;
+                margin-bottom: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📊 Histórico de Alertas</h1>
+            
+            <p class="info-text">Visualize a incidência de alertas de presença por hora do dia</p>
+            
+            <div class="controls">
+                <label>Selecione a data:</label>
+                <select id="dataSelect"></select>
+                <button onclick="carregarDados()">🔄 Atualizar</button>
+            </div>
+            
+            <div class="chart-card">
+                <h3 class="chart-title" id="chart-title">Alertas por Hora</h3>
+                <canvas id="alertasChart"></canvas>
+            </div>
+            
+            <div class="text-center">
+                <a href="/" class="nav-link">🏠 Voltar ao Monitor</a>
+            </div>
+        </div>
+        
+        <script>
+            let chart;
+            
+            // Inicializa gráfico
+            const ctx = document.getElementById('alertasChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Array.from({length: 24}, (_, i) => i + 'h'),
+                    datasets: [{
+                        label: 'Quantidade de Alertas',
+                        data: Array(24).fill(0),
+                        backgroundColor: 'rgba(231,76,60,0.7)',
+                        borderColor: '#e74c3c',
+                        borderWidth: 2,
+                        borderRadius: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: '#fff', stepSize: 1 }
+                        },
+                        x: {
+                            grid: { color: 'rgba(255,255,255,0.1)' },
+                            ticks: { color: '#fff' }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#fff' } }
+                    }
+                }
+            });
+            
+            // Carrega datas disponíveis
+            fetch('/api/datas-disponiveis')
+                .then(r => r.json())
+                .then(datas => {
+                    const select = document.getElementById('dataSelect');
+                    if (datas.length === 0) {
+                        const hoje = new Date().toISOString().split('T')[0];
+                        datas = [hoje];
+                    }
+                    datas.forEach(d => {
+                        const opt = document.createElement('option');
+                        opt.value = d;
+                        opt.textContent = formatarData(d);
+                        select.appendChild(opt);
+                    });
+                    carregarDados();
+                });
+            
+            function formatarData(dataStr) {
+                const [ano, mes, dia] = dataStr.split('-');
+                return dia + '/' + mes + '/' + ano;
+            }
+            
+            function carregarDados() {
+                const data = document.getElementById('dataSelect').value;
+                fetch('/api/alertas-por-hora?data=' + data)
+                    .then(r => r.json())
+                    .then(resp => {
+                        const alertas = resp.dados.map(d => d.alertas);
+                        chart.data.datasets[0].data = alertas;
+                        chart.update();
+                        
+                        document.getElementById('chart-title').textContent = 
+                            'Alertas por Hora - ' + formatarData(resp.data);
+                    });
+            }
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)

@@ -5,24 +5,15 @@ import time
 from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
-MQTT_BROKER = "localhost"  # Seu Mosquitto Local
-MQTT_TOPIC = "lab/03/dht11"
+MQTT_BROKER = "localhost"  # Mosquitto Local
+MQTT_TOPIC = "lab/03/ultrassonico"
 
-# COLOQUE AQUI O IP PÚBLICO DA SUA EC2 DA AWS
+# IP PÚBLICO DA EC2 DA AWS
 AWS_URL = "http://44.213.60.114:5000/api/enviar"
 
 # Variáveis globais para controle de tempo
 ultimo_envio = 0
 INTERVALO_ENVIO = 3  # Segundos
-
-def verificar_periodo():
-    hora = datetime.now().hour
-    if 4 <= hora < 12:
-        return "noite"
-    elif 12 <= hora < 18:
-        return "tarde"
-    else:
-        return "noite"
 
 def on_connect(client, userdata, flags, rc):
     print("Conectado ao MQTT Local!")
@@ -32,24 +23,24 @@ def on_message(client, userdata, msg):
     global ultimo_envio
     
     try:
-        # Recebe e Trata Localmente
+        # Recebe dados do ESP32
         payload = msg.payload.decode()
         dados = json.loads(payload)
-        temp = dados['temperatura']
-        umid = dados['umidade']
-        periodo_atual = verificar_periodo()
         
-        print(f"Local: {temp}°C | {umid}% | Periodo: {periodo_atual}")
+        distancia = dados.get('distancia_cm')
+        alerta = dados.get('alerta', False)
         
-        # Verifica se já passou 3 segundos
+        print(f"Local: {distancia} cm | Alerta: {'SIM' if alerta else 'NÃO'}")
+        
+        # Verifica se já passou o intervalo
         agora = time.time()
         if (agora - ultimo_envio) >= INTERVALO_ENVIO:
             
-            # Prepara o pacote para a AWS
+            # Prepara o pacote para a AWS (adiciona timestamp)
             json_aws = {
-                "temperatura": temp,
-                "umidade": umid,
-                "periodo": periodo_atual
+                "distancia_cm": distancia,
+                "alerta": alerta,
+                "data_hora": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
             }
             
             # Envia para a AWS via HTTP POST
