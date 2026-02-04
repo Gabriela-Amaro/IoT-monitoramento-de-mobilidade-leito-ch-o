@@ -233,12 +233,12 @@ def index():
             </div>
             
             <div class="chart-card">
-                <h3 class="chart-title">📈 Distância ao Longo do Tempo (Hoje)</h3>
+                <h3 class="chart-title">Distância ao Longo do Tempo (Hoje)</h3>
                 <canvas id="distanciaChart"></canvas>
             </div>
             
             <div class="text-center">
-                <a href="/graficos" class="nav-link">📊 Ver Histórico de Alertas</a>
+                <a href="/graficos" class="nav-link">Ver Histórico de Alertas</a>
             </div>
         </div>
         
@@ -436,14 +436,13 @@ def graficos():
     </head>
     <body>
         <div class="container">
-            <h1>📊 Histórico de Alertas</h1>
+            <h1>Histórico de Alertas</h1>
             
             <p class="info-text">Visualize a incidência de alertas de presença por hora do dia</p>
             
             <div class="controls">
                 <label>Selecione a data:</label>
-                <select id="dataSelect"></select>
-                <button onclick="carregarDados()">🔄 Atualizar</button>
+                <select id="dataSelect" onchange="carregarDados()"></select>
             </div>
             
             <div class="chart-card">
@@ -452,7 +451,7 @@ def graficos():
             </div>
             
             <div class="text-center">
-                <a href="/" class="nav-link">🏠 Voltar ao Monitor</a>
+                <a href="/" class="nav-link">Voltar ao Monitor</a>
             </div>
         </div>
         
