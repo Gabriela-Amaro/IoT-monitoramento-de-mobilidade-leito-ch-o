@@ -356,11 +356,6 @@ def index():
                     }
                 });
             
-            // Recebe atualizações em tempo real
-            socket.on('nova_leitura', function(data) {
-                addPonto(data.data_hora, data.distancia_cm, data.alerta);
-                atualizarStatus(data.distancia_cm, data.alerta, data.data_hora);
-            });
             
             function addPonto(hora, distancia, alerta) {
                 // Limita novos pontos
@@ -397,6 +392,48 @@ def index():
                     alertBox.className = 'alert-indicator alert-normal';
                     alertBox.innerHTML = '🟢 Normal';
                 }
+            }
+            
+            // Timer para adicionar pontos vazios quando não recebe dados
+            let ultimoRecebimento = Date.now();
+            const INTERVALO_ESPERADO = 3000; // 3 segundos
+            
+            // Marca quando recebeu dados
+            socket.on('nova_leitura', function(data) {
+                ultimoRecebimento = Date.now();
+                addPonto(data.data_hora, data.distancia_cm, data.alerta);
+                atualizarStatus(data.distancia_cm, data.alerta, data.data_hora);
+            });
+            
+            // Verifica a cada segundo se precisa adicionar ponto vazio
+            setInterval(() => {
+                const agora = Date.now();
+                if (agora - ultimoRecebimento > INTERVALO_ESPERADO) {
+                    // Não recebeu dados recentemente, adiciona ponto vazio
+                    const horaAtual = new Date().toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+                    addPontoVazio(horaAtual);
+                    ultimoRecebimento = agora; // Reseta para não adicionar vários seguidos
+                }
+            }, 1000);
+            
+            function addPontoVazio(hora) {
+                if (chart.data.labels.length > MAX_PONTOS) {
+                    chart.data.labels.shift();
+                    chart.data.datasets[0].data.shift();
+                    chart.data.datasets[1].data.shift();
+                    chart.data.datasets[0].pointBackgroundColor.shift();
+                    chart.data.datasets[0].pointBorderColor.shift();
+                    alertas.shift();
+                }
+                
+                chart.data.labels.push(hora);
+                chart.data.datasets[0].data.push(null); // Ponto vazio
+                chart.data.datasets[1].data.push(null);
+                alertas.push(false);
+                chart.data.datasets[0].pointBackgroundColor.push('transparent');
+                chart.data.datasets[0].pointBorderColor.push('transparent');
+                
+                chart.update('none');
             }
             
             // Fallback: polling a cada 5s caso WebSocket falhe
