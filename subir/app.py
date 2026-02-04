@@ -31,6 +31,13 @@ def get_client_ip():
         return request.headers.get('X-Forwarded-For').split(',')[0].strip()
     return request.remote_addr
 
+# Quando cliente conecta via WebSocket, entra na room do seu IP
+@socketio.on('connect')
+def handle_connect():
+    from flask_socketio import join_room
+    ip_cliente = get_client_ip()
+    join_room(ip_cliente)
+
 with app.app_context():
     db.create_all()
 
@@ -65,13 +72,12 @@ def receber_dados():
     db.session.add(nova_leitura)
     db.session.commit()
     
-    # Notifica clientes via WebSocket (inclui IP para filtro no cliente)
+    # Notifica apenas clientes do mesmo IP (room = IP)
     socketio.emit('nova_leitura', {
         'distancia_cm': nova_leitura.distancia_cm,
         'alerta': nova_leitura.alerta,
-        'data_hora': nova_leitura.data_hora.strftime("%H:%M:%S"),
-        'ip_origem': ip_cliente
-    })
+        'data_hora': nova_leitura.data_hora.strftime("%H:%M:%S")
+    }, room=ip_cliente)
     
     return jsonify({"status": "sucesso", "ip_registrado": ip_cliente}), 201
 
