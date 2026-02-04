@@ -275,18 +275,37 @@ def index():
                 type: 'line',
                 data: {
                     labels: [],
-                    datasets: [{
-                        label: 'Distância (cm)',
-                        data: [],
-                        borderColor: '#00cec9',
-                        backgroundColor: 'rgba(0,206,201,0.1)',
-                        fill: true,
-                        tension: 0.4,
-                        pointRadius: 3,
-                        pointBackgroundColor: [], // Cores dinâmicas
-                        pointBorderColor: [],
-                        pointBorderWidth: 2
-                    }]
+                    datasets: [
+                        {
+                            // Linha principal (todas as leituras)
+                            label: 'Distância (cm)',
+                            data: [],
+                            borderColor: '#00cec9',
+                            backgroundColor: 'rgba(0,206,201,0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 3,
+                            pointBackgroundColor: [],
+                            pointBorderColor: [],
+                            pointBorderWidth: 1,
+                            borderWidth: 2
+                        },
+                        {
+                            // Linha de alertas (só conecta pontos de alerta)
+                            label: 'Alertas',
+                            data: [],
+                            borderColor: '#e74c3c',
+                            backgroundColor: 'transparent',
+                            fill: false,
+                            tension: 0,
+                            pointRadius: 5,
+                            pointBackgroundColor: '#e74c3c',
+                            pointBorderColor: '#c0392b',
+                            pointBorderWidth: 2,
+                            borderWidth: 1,
+                            spanGaps: true // Conecta pontos mesmo com gaps (null)
+                        }
+                    ]
                 },
                 options: {
                     animation: false,
@@ -312,12 +331,15 @@ def index():
             fetch('/api/leituras-hoje')
                 .then(r => r.json())
                 .then(data => {
-                    // Carrega todos os dados históricos de uma vez
+                    // Carrega todos os dados históricos
                     chart.data.labels = data.map(l => l.data_hora);
                     chart.data.datasets[0].data = data.map(l => l.distancia_cm);
                     alertas = data.map(l => l.alerta);
                     
-                    // Define cores dos pontos baseado no alerta
+                    // Linha de alertas: só mostra valor quando tem alerta
+                    chart.data.datasets[1].data = data.map(l => l.alerta ? l.distancia_cm : null);
+                    
+                    // Define cores dos pontos da linha principal
                     chart.data.datasets[0].pointBackgroundColor = alertas.map(a => a ? '#e74c3c' : '#00cec9');
                     chart.data.datasets[0].pointBorderColor = alertas.map(a => a ? '#c0392b' : '#00b894');
                     chart.update('none');
@@ -335,17 +357,22 @@ def index():
             });
             
             function addPonto(hora, distancia, alerta) {
-                // Limita apenas novos pontos para não sobrecarregar o gráfico
+                // Limita novos pontos
                 if (chart.data.labels.length > MAX_PONTOS) {
                     chart.data.labels.shift();
                     chart.data.datasets[0].data.shift();
+                    chart.data.datasets[1].data.shift();
                     chart.data.datasets[0].pointBackgroundColor.shift();
                     chart.data.datasets[0].pointBorderColor.shift();
+                    alertas.shift();
                 }
+                
                 chart.data.labels.push(hora);
                 chart.data.datasets[0].data.push(distancia);
+                chart.data.datasets[1].data.push(alerta ? distancia : null); // Linha de alertas
+                alertas.push(alerta);
                 
-                // Adiciona cor do ponto (vermelho se alerta, verde se normal)
+                // Cor do ponto na linha principal
                 chart.data.datasets[0].pointBackgroundColor.push(alerta ? '#e74c3c' : '#00cec9');
                 chart.data.datasets[0].pointBorderColor.push(alerta ? '#c0392b' : '#00b894');
                 
