@@ -6,10 +6,10 @@ from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
 MQTT_BROKER = "localhost"  # Mosquitto Local
-MQTT_TOPIC = "lab/03/ultrassonico"
+MQTT_TOPIC = "lab/03/ultrasonico"
 
 # IP PÚBLICO DA EC2 DA AWS
-AWS_URL = "http://44.213.60.114:5000/api/enviar"
+AWS_URL = "http://98.95.203.92:5000/api/enviar"
 
 # Variáveis globais para controle de tempo
 ultimo_envio = 0
