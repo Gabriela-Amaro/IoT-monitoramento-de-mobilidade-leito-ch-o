@@ -147,7 +147,7 @@ def index():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Monitor de Presença - IoT</title>
+        <title>Monitoramento de Mobilidade</title>
         <meta charset="UTF-8">
         <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -237,7 +237,7 @@ def index():
     </head>
     <body>
         <div class="container">
-            <h1>Monitor de Presença <span>| Sensor Ultrassônico</span></h1>
+            <h1><span>Monitoramento de Mobilidade Leito-Chão</span></h1>
             
             <div class="status-card">
                 <div class="status-item">
@@ -267,6 +267,7 @@ def index():
             const socket = io();
             let chart;
             const MAX_PONTOS = 100;
+            let alertas = []; // Array para armazenar status de alerta de cada ponto
             
             // Inicializa gráfico
             const ctx = document.getElementById('distanciaChart').getContext('2d');
@@ -281,11 +282,14 @@ def index():
                         backgroundColor: 'rgba(0,206,201,0.1)',
                         fill: true,
                         tension: 0.4,
-                        pointRadius: 2
+                        pointRadius: 3,
+                        pointBackgroundColor: [], // Cores dinâmicas
+                        pointBorderColor: [],
+                        pointBorderWidth: 2
                     }]
                 },
                 options: {
-                    animation: false, // Sem animação para não parecer reinício
+                    animation: false,
                     responsive: true,
                     scales: {
                         y: {
@@ -311,6 +315,11 @@ def index():
                     // Carrega todos os dados históricos de uma vez
                     chart.data.labels = data.map(l => l.data_hora);
                     chart.data.datasets[0].data = data.map(l => l.distancia_cm);
+                    alertas = data.map(l => l.alerta);
+                    
+                    // Define cores dos pontos baseado no alerta
+                    chart.data.datasets[0].pointBackgroundColor = alertas.map(a => a ? '#e74c3c' : '#00cec9');
+                    chart.data.datasets[0].pointBorderColor = alertas.map(a => a ? '#c0392b' : '#00b894');
                     chart.update('none');
                     
                     if (data.length > 0) {
@@ -330,9 +339,16 @@ def index():
                 if (chart.data.labels.length > MAX_PONTOS) {
                     chart.data.labels.shift();
                     chart.data.datasets[0].data.shift();
+                    chart.data.datasets[0].pointBackgroundColor.shift();
+                    chart.data.datasets[0].pointBorderColor.shift();
                 }
                 chart.data.labels.push(hora);
                 chart.data.datasets[0].data.push(distancia);
+                
+                // Adiciona cor do ponto (vermelho se alerta, verde se normal)
+                chart.data.datasets[0].pointBackgroundColor.push(alerta ? '#e74c3c' : '#00cec9');
+                chart.data.datasets[0].pointBorderColor.push(alerta ? '#c0392b' : '#00b894');
+                
                 chart.update('none');
             }
             
